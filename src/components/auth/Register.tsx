@@ -36,8 +36,6 @@ export const Register: React.FC = () => {
 
   const batches = ['2020', '2021', '2022', '2023', '2024'];
 
-  const crCodes = ['CR2024001', 'CR2024002', 'CR2024003', 'CR2024004', 'CR2024005'];
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -248,14 +246,9 @@ export const Register: React.FC = () => {
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-all duration-200 bg-gray-50 focus:bg-white"
                   placeholder="Enter CR verification code"
                 />
-                <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                  <p className="text-sm text-blue-800 font-medium mb-1">Demo CR Codes:</p>
-                  <div className="text-xs text-blue-700 space-y-1">
-                    {crCodes.map((code, index) => (
-                      <p key={index}>{code}</p>
-                    ))}
-                  </div>
-                </div>
+                <p className="mt-2 text-sm text-gray-600">
+                  Contact your department head to get a CR verification code.
+                </p>
               </div>
             )}
 

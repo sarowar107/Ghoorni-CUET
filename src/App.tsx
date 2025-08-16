@@ -11,71 +11,29 @@ import { Files } from './components/Files';
 import { Profile } from './components/Profile';
 import { AdminPanel } from './components/AdminPanel';
 import { QuestionsAnswers } from './components/QuestionsAnswers';
-
-// Initialize demo data
-const initializeDemoData = () => {
-  const existingUsers = localStorage.getItem('cuet_users');
-  if (!existingUsers) {
-    const demoUsers = [
-      {
-        id: '1',
-        name: 'Sarowar Islam',
-        email: 'student@cuet.ac.bd',
-        password: 'password',
-        role: 'student',
-        department: 'Computer Science & Engineering',
-        batch: '2022',
-        profilePicture: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face'
-      },
-      {
-        id: '2',
-        name: 'Sabiha Anan',
-        email: 'teacher@cuet.ac.bd',
-        password: 'password',
-        role: 'teacher',
-        department: 'Computer Science & Engineering',
-        profilePicture: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=150&h=150&fit=crop&crop=face'
-      },
-      {
-        id: '3',
-        name: 'Bob Wilson',
-        email: 'cr@cuet.ac.bd',
-        password: 'password',
-        role: 'cr',
-        department: 'Computer Science & Engineering',
-        batch: '2022',
-        profilePicture: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face'
-      },
-      {
-        id: '4',
-        name: 'Admin User',
-        email: 'admin@cuet.ac.bd',
-        password: 'password',
-        role: 'admin',
-        department: 'Administration',
-        isActive: true,
-        profilePicture: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=150&h=150&fit=crop&crop=face'
-      }
-    ];
-    localStorage.setItem('cuet_users', JSON.stringify(demoUsers));
-  }
-};
+import { LoadingSpinner } from './components/LoadingSpinner';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  
+  if (loading) {
+    return <LoadingSpinner />;
+  }
+  
   return user ? <>{children}</> : <Navigate to="/login" />;
 };
 
 const AuthRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  
+  if (loading) {
+    return <LoadingSpinner />;
+  }
+  
   return user ? <Navigate to="/dashboard" /> : <>{children}</>;
 };
 
 function App() {
-  useEffect(() => {
-    initializeDemoData();
-  }, []);
-
   return (
     <AuthProvider>
       <AppProvider>

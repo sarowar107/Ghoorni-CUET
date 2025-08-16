@@ -131,55 +131,6 @@ export const Login: React.FC = () => {
             </p>
           </div>
 
-          {/* Demo accounts */}
-          <div className="mt-6 p-4 bg-gradient-to-r from-sky-50 to-blue-50 rounded-xl border border-sky-100">
-            <p className="text-sm text-sky-800 font-medium mb-2">Demo Accounts:</p>
-            <div className="text-xs text-sky-700 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('student@cuet.ac.bd');
-                    setPassword('password');
-                  }}
-                  className="px-3 py-2 bg-sky-100 hover:bg-sky-200 rounded-lg text-sky-800 font-medium transition-colors"
-                >
-                  Student Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('teacher@cuet.ac.bd');
-                    setPassword('password');
-                  }}
-                  className="px-3 py-2 bg-blue-100 hover:bg-blue-200 rounded-lg text-blue-800 font-medium transition-colors"
-                >
-                  Teacher Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('cr@cuet.ac.bd');
-                    setPassword('password');
-                  }}
-                  className="px-3 py-2 bg-green-100 hover:bg-green-200 rounded-lg text-green-800 font-medium transition-colors"
-                >
-                  CR Login
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('admin@cuet.ac.bd');
-                    setPassword('password');
-                  }}
-                  className="px-3 py-2 bg-purple-100 hover:bg-purple-200 rounded-lg text-purple-800 font-medium transition-colors"
-                >
-                  Admin Login
-                </button>
-              </div>
-              <p className="text-center text-sky-600 mt-2">Click any button above to auto-fill credentials</p>
-            </div>
-          </div>
         </div>
       </div>
     </div>

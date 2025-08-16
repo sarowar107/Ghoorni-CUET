@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase, handleSupabaseError, getCurrentUserProfile } from '../lib/supabase';
+import { useAuth } from './AuthContext';
 
 export interface Notice {
   id: string;
@@ -7,7 +9,9 @@ export interface Notice {
   author: string;
   authorId: string;
   department: string;
+  departmentId: string;
   batch?: string;
+  batchId?: string;
   category: 'academic' | 'event' | 'general';
   isPublic: boolean;
   priority: 'low' | 'medium' | 'high' | 'urgent';
@@ -26,7 +30,9 @@ export interface FileItem {
   uploadedBy: string;
   uploaderId: string;
   department: string;
+  departmentId: string;
   batch?: string;
+  batchId?: string;
   isPublic: boolean;
   uploadedAt: Date;
   url: string;
@@ -38,15 +44,51 @@ export interface CalendarEvent {
   description: string;
   date: Date;
   type: 'exam' | 'event' | 'holiday' | 'notice';
+  departmentId?: string;
+  batchId?: string;
+  isPublic: boolean;
+}
+
+export interface Question {
+  id: string;
+  title: string;
+  content: string;
+  author: string;
+  authorId: string;
+  department: string;
+  departmentId: string;
+  batch?: string;
+  batchId?: string;
+  category: 'academic' | 'technical' | 'general';
+  image?: string;
+  upvotes: number;
+  createdAt: Date;
+  answers: Answer[];
+}
+
+export interface Answer {
+  id: string;
+  questionId: string;
+  content: string;
+  author: string;
+  authorId: string;
+  authorRole: string;
+  image?: string;
+  upvotes: number;
+  createdAt: Date;
 }
 
 interface AppContextType {
   notices: Notice[];
   files: FileItem[];
   events: CalendarEvent[];
+  questions: Question[];
+  loading: boolean;
   addNotice: (notice: Omit<Notice, 'id' | 'createdAt'>) => void;
   addFile: (file: Omit<FileItem, 'id' | 'uploadedAt'>) => void;
   addEvent: (event: Omit<CalendarEvent, 'id'>) => void;
+  addQuestion: (question: Omit<Question, 'id' | 'createdAt' | 'answers'>) => void;
+  addAnswer: (answer: Omit<Answer, 'id' | 'createdAt'>) => void;
   deleteNotice: (id: string) => void;
   deleteFile: (id: string) => void;
   getStats: () => {
@@ -54,6 +96,12 @@ interface AppContextType {
     activeUsers: number;
     runningEvents: number;
     upcomingExams: number;
+  };
+  getQuestionStats: () => {
+    totalQuestions: number;
+    totalAnswers: number;
+    unansweredQuestions: number;
+    myQuestions: number;
   };
 }
 
@@ -68,363 +116,388 @@ export const useApp = () => {
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [notices, setNotices] = useState<Notice[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load data from localStorage
-    const storedNotices = localStorage.getItem('cuet_notices');
-    const storedFiles = localStorage.getItem('cuet_files');
-    const storedEvents = localStorage.getItem('cuet_events');
-    const storedQuestions = localStorage.getItem('cuet_questions');
-
-    if (storedNotices) {
-      const parsedNotices = JSON.parse(storedNotices).map((notice: any) => ({
-        ...notice,
-        createdAt: new Date(notice.createdAt),
-        expiresAt: new Date(notice.expiresAt),
-        eventDate: notice.eventDate ? new Date(notice.eventDate) : undefined,
-      }));
-      setNotices(parsedNotices);
-    } else {
-      // Initialize with demo notices
-      const demoNotices: Notice[] = [
-        {
-          id: '1',
-          title: 'Mid-term Examination Schedule Released',
-          content: 'The mid-term examination schedule for all departments has been published. Students are advised to check their respective department notice boards for detailed timing and venue information. All exams will be conducted following COVID-19 safety protocols.',
-          author: 'Dr. Ahmed Rahman',
-          authorId: 'teacher1',
-          department: 'Computer Science & Engineering',
-          category: 'academic',
-          priority: 'high',
-          isPublic: true,
-          createdAt: new Date(2025, 0, 10),
-          expiresAt: new Date(2025, 0, 25),
-          isActive: true,
-          attachments: ['exam_schedule.pdf', 'covid_protocols.pdf'],
-          eventDate: new Date(2025, 0, 22, 9, 0) // January 22, 2025 at 9:00 AM
-        },
-        {
-          id: '2',
-          title: 'Tech Fest 2025 - Call for Participation',
-          content: 'CUET Tech Fest 2025 is approaching! We invite all students to participate in various competitions including programming contests, robotics, and innovation showcases. Registration deadline is January 30th.',
-          author: 'Student Affairs Office',
-          authorId: 'admin1',
-          department: 'All Departments',
-          category: 'event',
-          priority: 'medium',
-          isPublic: true,
-          createdAt: new Date(2025, 0, 8),
-          expiresAt: new Date(2025, 1, 15),
-          isActive: true,
-          attachments: ['techfest_brochure.pdf']
-        },
-        {
-          id: '3',
-          title: 'Library System Maintenance',
-          content: 'The central library management system will undergo scheduled maintenance on January 20th from 2:00 AM to 6:00 AM. Online services will be temporarily unavailable during this period.',
-          author: 'Library Administration',
-          authorId: 'admin2',
-          department: 'All Departments',
-          category: 'announcement',
-          priority: 'low',
-          isPublic: true,
-          createdAt: new Date(2025, 0, 15),
-          expiresAt: new Date(2025, 0, 21),
-          isActive: true
-        },
-        {
-          id: '4',
-          title: 'Emergency: Campus Water Supply Disruption',
-          content: 'Due to emergency pipeline repairs, water supply will be disrupted in academic buildings from 10:00 AM to 4:00 PM today. Alternative arrangements have been made in the student cafeteria.',
-          author: 'Campus Maintenance',
-          authorId: 'admin3',
-          department: 'All Departments',
-          category: 'alert',
-          priority: 'urgent',
-          isPublic: true,
-          createdAt: new Date(),
-          expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000), // 8 hours from now
-          isActive: true
-        },
-        {
-          id: '5',
-          title: 'CSE Department Seminar Series',
-          content: 'Join us for the weekly seminar series featuring industry experts and research presentations. This week: "AI in Healthcare" by Dr. Sarah Johnson from MIT. Venue: Seminar Hall A, Time: 3:00 PM.',
-          author: 'CSE Department',
-          authorId: 'teacher2',
-          department: 'Computer Science & Engineering',
-          batch: '2022',
-          category: 'academic',
-          priority: 'medium',
-          isPublic: false,
-          createdAt: new Date(2025, 0, 12),
-          expiresAt: new Date(2025, 0, 18),
-          isActive: true,
-          eventDate: new Date(2025, 0, 16, 15, 0) // January 16, 2025 at 3:00 PM
-        },
-        {
-          id: '6',
-          title: 'Scholarship Application Deadline Extended',
-          content: 'The deadline for merit-based scholarship applications has been extended to February 5th. Students with CGPA above 3.5 are encouraged to apply. Required documents: transcripts, recommendation letters, and personal statement.',
-          author: 'Financial Aid Office',
-          authorId: 'admin4',
-          department: 'All Departments',
-          category: 'announcement',
-          priority: 'high',
-          isPublic: true,
-          createdAt: new Date(2025, 0, 5),
-          expiresAt: new Date(2025, 1, 5),
-          isActive: true,
-          attachments: ['scholarship_form.pdf', 'requirements.pdf']
-        },
-        {
-          id: '7',
-          title: 'Career Fair 2025 Registration Open',
-          content: 'Annual Career Fair will be held on March 15-16, 2025. Top companies including Google, Microsoft, and local tech giants will participate. Students can register online and submit their resumes.',
-          author: 'Career Services',
-          authorId: 'admin5',
-          department: 'All Departments',
-          category: 'event',
-          priority: 'high',
-          isPublic: true,
-          createdAt: new Date(2025, 0, 1),
-          expiresAt: new Date(2025, 2, 16),
-          isActive: true,
-          attachments: ['company_list.pdf', 'registration_guide.pdf'],
-          eventDate: new Date(2025, 2, 15, 9, 0) // March 15, 2025 at 9:00 AM
-        },
-        {
-          id: '8',
-          title: 'Class Schedule Change - EEE Department',
-          content: 'Due to faculty availability, the following classes have been rescheduled: Circuit Analysis (EEE 201) moved from Monday 9 AM to Tuesday 11 AM. Power Systems (EEE 301) moved from Wednesday 2 PM to Thursday 10 AM.',
-          author: 'EEE Department Head',
-          authorId: 'teacher3',
-          department: 'Electrical & Electronic Engineering',
-          category: 'academic',
-          priority: 'medium',
-          isPublic: false,
-          createdAt: new Date(2025, 0, 14),
-          expiresAt: new Date(2025, 0, 28),
-          isActive: true
-        }
-      ];
-      setNotices(demoNotices);
-      localStorage.setItem('cuet_notices', JSON.stringify(demoNotices));
+    if (user) {
+      loadData();
     }
+  }, [user]);
 
-    if (storedFiles) {
-      const parsedFiles = JSON.parse(storedFiles).map((file: any) => ({
-        ...file,
-        uploadedAt: new Date(file.uploadedAt),
-      }));
-      setFiles(parsedFiles);
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      await Promise.all([
+        loadNotices(),
+        loadFiles(),
+        loadEvents(),
+        loadQuestions(),
+      ]);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
     }
-
-    if (storedEvents) {
-      const parsedEvents = JSON.parse(storedEvents).map((event: any) => ({
-        ...event,
-        date: new Date(event.date),
-      }));
-      setEvents(parsedEvents);
-    } else {
-      // Initialize with some sample events
-      const sampleEvents: CalendarEvent[] = [
-        {
-          id: '1',
-          title: 'Mid-term Exam',
-          description: 'CSE Department Mid-term examinations',
-          date: new Date(2025, 0, 25),
-          type: 'exam',
-        },
-        {
-          id: '2',
-          title: 'Tech Fest',
-          description: 'Annual technology festival',
-          date: new Date(2025, 1, 15),
-          type: 'event',
-        },
-      ];
-      setEvents(sampleEvents);
-      localStorage.setItem('cuet_events', JSON.stringify(sampleEvents));
-    }
-
-    if (storedQuestions) {
-      const parsedQuestions = JSON.parse(storedQuestions).map((question: any) => ({
-        ...question,
-        createdAt: new Date(question.createdAt),
-        answers: question.answers?.map((answer: any) => ({
-          ...answer,
-          createdAt: new Date(answer.createdAt),
-        })) || [],
-      }));
-      setQuestions(parsedQuestions);
-    } else {
-      // Initialize with demo questions
-      const demoQuestions: Question[] = [
-        {
-          id: '1',
-          title: 'How to solve differential equations in MATLAB?',
-          content: 'I am struggling with solving second-order differential equations using MATLAB. Can someone provide a step-by-step guide with examples?',
-          author: 'John Doe',
-          authorId: '1',
-          department: 'Computer Science & Engineering',
-          batch: '2022',
-          category: 'technical',
-          upvotes: 5,
-          createdAt: new Date(2025, 0, 10),
-          answers: [
-            {
-              id: '1',
-              questionId: '1',
-              content: 'You can use the ode45 function in MATLAB. Here\'s a basic example: [t,y] = ode45(@(t,y) [y(2); -y(1)], [0 10], [1; 0]). This solves y\'\' + y = 0 with initial conditions.',
-              author: 'Dr. Ahmed Rahman',
-              authorId: 'teacher1',
-              authorRole: 'teacher',
-              upvotes: 8,
-              createdAt: new Date(2025, 0, 11),
-            }
-          ],
-        },
-        {
-          id: '2',
-          title: 'Best practices for database design?',
-          content: 'What are the key principles I should follow when designing a relational database for a web application?',
-          author: 'Jane Smith',
-          authorId: '2',
-          department: 'Computer Science & Engineering',
-          batch: '2023',
-          category: 'academic',
-          upvotes: 3,
-          createdAt: new Date(2025, 0, 12),
-          answers: [],
-        },
-        {
-          id: '3',
-          title: 'How to prepare for technical interviews?',
-          content: 'I have upcoming technical interviews for software engineering positions. What topics should I focus on and how should I practice?',
-          author: 'Bob Wilson',
-          authorId: '3',
-          department: 'Computer Science & Engineering',
-          batch: '2022',
-          category: 'general',
-          upvotes: 12,
-          createdAt: new Date(2025, 0, 8),
-          answers: [
-            {
-              id: '2',
-              questionId: '3',
-              content: 'Focus on data structures and algorithms. Practice coding problems on LeetCode and HackerRank. Also, review system design concepts for senior positions.',
-              author: 'Alice Johnson',
-              authorId: '5',
-              authorRole: 'student',
-              upvotes: 6,
-              createdAt: new Date(2025, 0, 9),
-            },
-            {
-              id: '3',
-              questionId: '3',
-              content: 'Don\'t forget to practice behavioral questions too. Use the STAR method (Situation, Task, Action, Result) to structure your answers.',
-              author: 'Dr. Sarah Lee',
-              authorId: 'teacher2',
-              authorRole: 'teacher',
-              upvotes: 4,
-              createdAt: new Date(2025, 0, 10),
-            }
-          ],
-        }
-      ];
-      setQuestions(demoQuestions);
-      localStorage.setItem('cuet_questions', JSON.stringify(demoQuestions));
-    }
-  }, []);
-
-  const addNotice = (noticeData: Omit<Notice, 'id' | 'createdAt'>) => {
-    const newNotice: Notice = {
-      ...noticeData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-    };
-
-    const updatedNotices = [newNotice, ...notices];
-    setNotices(updatedNotices);
-    localStorage.setItem('cuet_notices', JSON.stringify(updatedNotices));
   };
 
-  const addFile = (fileData: Omit<FileItem, 'id' | 'uploadedAt'>) => {
-    const newFile: FileItem = {
-      ...fileData,
-      id: Date.now().toString(),
-      uploadedAt: new Date(),
-    };
+  const loadNotices = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('notices')
+        .select(`
+          *,
+          profiles!notices_author_id_fkey(name),
+          departments(name),
+          batches(year)
+        `)
+        .order('created_at', { ascending: false });
 
-    const updatedFiles = [newFile, ...files];
-    setFiles(updatedFiles);
-    localStorage.setItem('cuet_files', JSON.stringify(updatedFiles));
-  };
-
-  const addEvent = (eventData: Omit<CalendarEvent, 'id'>) => {
-    const newEvent: CalendarEvent = {
-      ...eventData,
-      id: Date.now().toString(),
-    };
-
-    const updatedEvents = [...events, newEvent];
-    setEvents(updatedEvents);
-    localStorage.setItem('cuet_events', JSON.stringify(updatedEvents));
-  };
-
-  const deleteNotice = (id: string) => {
-    const updatedNotices = notices.filter(notice => notice.id !== id);
-    setNotices(updatedNotices);
-    localStorage.setItem('cuet_notices', JSON.stringify(updatedNotices));
-  };
-
-  const deleteFile = (id: string) => {
-    const updatedFiles = files.filter(file => file.id !== id);
-    setFiles(updatedFiles);
-    localStorage.setItem('cuet_files', JSON.stringify(updatedFiles));
-  };
-
-  const addQuestion = (questionData: Omit<Question, 'id' | 'createdAt' | 'answers'>) => {
-    const newQuestion: Question = {
-      ...questionData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-      answers: [],
-    };
-
-    const updatedQuestions = [newQuestion, ...questions];
-    setQuestions(updatedQuestions);
-    localStorage.setItem('cuet_questions', JSON.stringify(updatedQuestions));
-  };
-
-  const addAnswer = (answerData: Omit<Answer, 'id' | 'createdAt'>) => {
-    const newAnswer: Answer = {
-      ...answerData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-    };
-
-    const updatedQuestions = questions.map(question => {
-      if (question.id === answerData.questionId) {
-        return {
-          ...question,
-          answers: [...question.answers, newAnswer],
-        };
+      if (error) {
+        handleSupabaseError(error);
+        return;
       }
-      return question;
-    });
 
-    setQuestions(updatedQuestions);
-    localStorage.setItem('cuet_questions', JSON.stringify(updatedQuestions));
+      const formattedNotices: Notice[] = data.map((notice: any) => ({
+        id: notice.id,
+        title: notice.title,
+        content: notice.content,
+        author: notice.profiles?.name || 'Unknown',
+        authorId: notice.author_id,
+        department: notice.departments?.name || 'All Departments',
+        departmentId: notice.department_id,
+        batch: notice.batches?.year,
+        batchId: notice.batch_id,
+        category: notice.category,
+        priority: notice.priority,
+        isPublic: notice.is_public,
+        isActive: notice.is_active,
+        createdAt: new Date(notice.created_at),
+        expiresAt: new Date(notice.expires_at),
+        eventDate: notice.event_date ? new Date(notice.event_date) : undefined,
+        attachments: notice.attachments,
+      }));
+
+      setNotices(formattedNotices);
+    } catch (error) {
+      console.error('Error loading notices:', error);
+    }
+  };
+
+  const loadFiles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('files')
+        .select(`
+          *,
+          profiles!files_uploader_id_fkey(name),
+          departments(name),
+          batches(year)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      const formattedFiles: FileItem[] = data.map((file: any) => ({
+        id: file.id,
+        name: file.name,
+        size: file.file_size,
+        type: file.file_type,
+        uploadedBy: file.profiles?.name || 'Unknown',
+        uploaderId: file.uploader_id,
+        department: file.departments?.name || 'All Departments',
+        departmentId: file.department_id,
+        batch: file.batches?.year,
+        batchId: file.batch_id,
+        isPublic: file.is_public,
+        uploadedAt: new Date(file.created_at),
+        url: file.file_path,
+      }));
+
+      setFiles(formattedFiles);
+    } catch (error) {
+      console.error('Error loading files:', error);
+    }
+  };
+
+  const loadEvents = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .select(`
+          *,
+          departments(name),
+          batches(year)
+        `)
+        .order('event_date', { ascending: true });
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      const formattedEvents: CalendarEvent[] = data.map((event: any) => ({
+        id: event.id,
+        title: event.title,
+        description: event.description || '',
+        date: new Date(event.event_date),
+        type: event.event_type,
+        departmentId: event.department_id,
+        batchId: event.batch_id,
+        isPublic: event.is_public,
+      }));
+
+      setEvents(formattedEvents);
+    } catch (error) {
+      console.error('Error loading events:', error);
+    }
+  };
+
+  const loadQuestions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('questions')
+        .select(`
+          *,
+          profiles!questions_author_id_fkey(name),
+          departments(name),
+          batches(year),
+          answers(
+            *,
+            profiles!answers_author_id_fkey(name, role)
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      const formattedQuestions: Question[] = data.map((question: any) => ({
+        id: question.id,
+        title: question.title,
+        content: question.content,
+        author: question.profiles?.name || 'Unknown',
+        authorId: question.author_id,
+        department: question.departments?.name || 'All Departments',
+        departmentId: question.department_id,
+        batch: question.batches?.year,
+        batchId: question.batch_id,
+        category: question.category,
+        image: question.image_url,
+        upvotes: question.upvotes,
+        createdAt: new Date(question.created_at),
+        answers: question.answers.map((answer: any) => ({
+          id: answer.id,
+          questionId: answer.question_id,
+          content: answer.content,
+          author: answer.profiles?.name || 'Unknown',
+          authorId: answer.author_id,
+          authorRole: answer.profiles?.role || 'student',
+          image: answer.image_url,
+          upvotes: answer.upvotes,
+          createdAt: new Date(answer.created_at),
+        })),
+      }));
+
+      setQuestions(formattedQuestions);
+    } catch (error) {
+      console.error('Error loading questions:', error);
+    }
+  };
+
+  const addNotice = async (noticeData: Omit<Notice, 'id' | 'createdAt'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('notices')
+        .insert({
+          title: noticeData.title,
+          content: noticeData.content,
+          author_id: user.id,
+          department_id: noticeData.departmentId || user.departmentId,
+          batch_id: noticeData.batchId || user.batchId,
+          category: noticeData.category,
+          priority: noticeData.priority,
+          is_public: noticeData.isPublic,
+          expires_at: noticeData.expiresAt.toISOString(),
+          event_date: noticeData.eventDate?.toISOString(),
+          attachments: noticeData.attachments,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadNotices(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error adding notice:', error);
+    }
+  };
+
+  const addFile = async (fileData: Omit<FileItem, 'id' | 'uploadedAt'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('files')
+        .insert({
+          name: fileData.name,
+          file_path: fileData.url,
+          file_size: fileData.size,
+          file_type: fileData.type,
+          uploader_id: user.id,
+          department_id: fileData.departmentId || user.departmentId,
+          batch_id: fileData.batchId || user.batchId,
+          is_public: fileData.isPublic,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadFiles(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error adding file:', error);
+    }
+  };
+
+  const addEvent = async (eventData: Omit<CalendarEvent, 'id'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .insert({
+          title: eventData.title,
+          description: eventData.description,
+          event_date: eventData.date.toISOString(),
+          event_type: eventData.type,
+          department_id: eventData.departmentId || user.departmentId,
+          batch_id: eventData.batchId || user.batchId,
+          is_public: eventData.isPublic,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadEvents(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error adding event:', error);
+    }
+  };
+
+  const addQuestion = async (questionData: Omit<Question, 'id' | 'createdAt' | 'answers'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('questions')
+        .insert({
+          title: questionData.title,
+          content: questionData.content,
+          author_id: user.id,
+          department_id: questionData.departmentId || user.departmentId,
+          batch_id: questionData.batchId || user.batchId,
+          category: questionData.category,
+          image_url: questionData.image,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadQuestions(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error adding question:', error);
+    }
+  };
+
+  const addAnswer = async (answerData: Omit<Answer, 'id' | 'createdAt'>) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('answers')
+        .insert({
+          question_id: answerData.questionId,
+          content: answerData.content,
+          author_id: user.id,
+          image_url: answerData.image,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadQuestions(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error adding answer:', error);
+    }
+  };
+
+  const deleteNotice = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('notices')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadNotices(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error deleting notice:', error);
+    }
+  };
+
+  const deleteFile = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('files')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
+      }
+
+      await loadFiles(); // Reload to get updated data
+    } catch (error) {
+      console.error('Error deleting file:', error);
+    }
   };
 
   const getStats = () => {
-    const users = JSON.parse(localStorage.getItem('cuet_users') || '[]');
     const now = new Date();
     const activeNotices = notices.filter(notice => notice.expiresAt > now);
     const upcomingExams = events.filter(event => 
@@ -432,18 +505,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     return {
-      totalUsers: users.length,
-      activeUsers: users.length, // Simplified - in real app would track last login
+      totalUsers: 0, // Would need to query profiles table
+      activeUsers: 0, // Would need to track last login
       runningEvents: activeNotices.length,
       upcomingExams: upcomingExams.length,
     };
   };
 
   const getQuestionStats = () => {
-    const currentUser = JSON.parse(localStorage.getItem('cuet_user') || '{}');
     const totalAnswers = questions.reduce((sum, question) => sum + question.answers.length, 0);
     const unansweredQuestions = questions.filter(question => question.answers.length === 0).length;
-    const myQuestions = questions.filter(question => question.authorId === currentUser.id).length;
+    const myQuestions = questions.filter(question => question.authorId === user?.id).length;
 
     return {
       totalQuestions: questions.length,
@@ -458,6 +530,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     files,
     events,
     questions,
+    loading,
     addNotice,
     addFile,
     addEvent,

@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase, handleSupabaseError } from '../lib/supabase';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export interface User {
   id: string;
@@ -6,13 +8,17 @@ export interface User {
   email: string;
   role: 'student' | 'cr' | 'teacher' | 'admin';
   department: string;
+  departmentId: string;
   batch?: string;
+  batchId?: string;
   profilePicture?: string;
   isVerified?: boolean;
+  isActive?: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
+  loading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   register: (userData: RegisterData) => Promise<boolean>;
   logout: () => void;
@@ -32,15 +38,6 @@ interface RegisterData {
   verificationCode?: string;
 }
 
-// Demo CR verification codes
-const CR_VERIFICATION_CODES = [
-  'CR2024001',
-  'CR2024002', 
-  'CR2024003',
-  'CR2024004',
-  'CR2024005'
-];
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const useAuth = () => {
@@ -53,119 +50,263 @@ export const useAuth = () => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for stored user session
-    const storedUser = localStorage.getItem('cuet_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        loadUserProfile(session.user);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        await loadUserProfile(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
+  const loadUserProfile = async (supabaseUser: SupabaseUser) => {
+    try {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select(`
+          *,
+          departments(id, name, code),
+          batches(id, year)
+        `)
+        .eq('id', supabaseUser.id)
+        .single();
+
+      if (error) {
+        console.error('Error loading profile:', error);
+        setLoading(false);
+        return;
+      }
+
+      if (profile) {
+        const userData: User = {
+          id: profile.id,
+          name: profile.name,
+          email: supabaseUser.email!,
+          role: profile.role as User['role'],
+          department: profile.departments?.name || '',
+          departmentId: profile.department_id || '',
+          batch: profile.batches?.year,
+          batchId: profile.batch_id || undefined,
+          profilePicture: profile.profile_picture || undefined,
+          isVerified: profile.is_verified,
+          isActive: profile.is_active,
+        };
+        setUser(userData);
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const login = async (email: string, password: string): Promise<boolean> => {
-    // Mock login - in real app, this would make API call
-    const users = JSON.parse(localStorage.getItem('cuet_users') || '[]');
-    const foundUser = users.find((u: any) => u.email === email && u.password === password);
-    
-    if (foundUser) {
-      const userSession = { ...foundUser };
-      delete userSession.password;
-      setUser(userSession);
-      localStorage.setItem('cuet_user', JSON.stringify(userSession));
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        console.error('Login error:', error);
+        return false;
+      }
+
+      if (data.user) {
+        await loadUserProfile(data.user);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Login error:', error);
       return true;
     }
     return false;
   };
 
   const register = async (userData: RegisterData): Promise<boolean> => {
-    // Mock registration - in real app, this would make API call
-    
-    // Check CR verification code if registering as CR
-    if (userData.role === 'cr') {
-      if (!userData.verificationCode || !CR_VERIFICATION_CODES.includes(userData.verificationCode)) {
-        return false; // Invalid verification code
+    try {
+      // Get department and batch IDs
+      const { data: departments } = await supabase
+        .from('departments')
+        .select('id')
+        .eq('name', userData.department)
+        .single();
+
+      let batchId = null;
+      if (userData.batch) {
+        const { data: batches } = await supabase
+          .from('batches')
+          .select('id')
+          .eq('year', userData.batch)
+          .single();
+        batchId = batches?.id;
       }
-    }
-    
-    const users = JSON.parse(localStorage.getItem('cuet_users') || '[]');
-    const existingUser = users.find((u: any) => u.email === userData.email);
-    
-    if (existingUser) {
-      return false; // User already exists
-    }
 
-    const newUser = {
-      id: Date.now().toString(),
-      ...userData,
-      isVerified: userData.role === 'cr' ? true : false,
-      profilePicture: `https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face`,
-    };
+      // Sign up user
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: userData.email,
+        password: userData.password,
+      });
 
-    users.push(newUser);
-    localStorage.setItem('cuet_users', JSON.stringify(users));
-    return true;
+      if (authError) {
+        console.error('Auth signup error:', authError);
+        return false;
+      }
+
+      if (authData.user) {
+        // Create profile
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: authData.user.id,
+            name: userData.name,
+            role: userData.role,
+            department_id: departments?.id,
+            batch_id: batchId,
+            is_verified: userData.role === 'cr',
+            profile_picture: `https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face`,
+          });
+
+        if (profileError) {
+          console.error('Profile creation error:', profileError);
+          return false;
+        }
+
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Registration error:', error);
+      return false;
+    }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('cuet_user');
   };
 
-  const updateProfile = (userData: Partial<User>) => {
-    if (user) {
-      const updatedUser = { ...user, ...userData };
-      setUser(updatedUser);
-      localStorage.setItem('cuet_user', JSON.stringify(updatedUser));
-      
-      // Update in users array
-      const users = JSON.parse(localStorage.getItem('cuet_users') || '[]');
-      const userIndex = users.findIndex((u: any) => u.id === user.id);
-      if (userIndex !== -1) {
-        users[userIndex] = { ...users[userIndex], ...userData };
-        localStorage.setItem('cuet_users', JSON.stringify(users));
+  const updateProfile = async (userData: Partial<User>) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          name: userData.name,
+          profile_picture: userData.profilePicture,
+        })
+        .eq('id', user.id);
+
+      if (error) {
+        handleSupabaseError(error);
+        return;
       }
+
+      setUser({ ...user, ...userData });
+    } catch (error) {
+      console.error('Profile update error:', error);
     }
   };
 
   const changePassword = async (currentPassword: string, newPassword: string): Promise<boolean> => {
-    if (!user) return false;
-    
-    const users = JSON.parse(localStorage.getItem('cuet_users') || '[]');
-    const userIndex = users.findIndex((u: any) => u.id === user.id);
-    
-    if (userIndex !== -1 && users[userIndex].password === currentPassword) {
-      users[userIndex].password = newPassword;
-      localStorage.setItem('cuet_users', JSON.stringify(users));
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (error) {
+        console.error('Password change error:', error);
+        return false;
+      }
+
       return true;
+    } catch (error) {
+      console.error('Password change error:', error);
+      return false;
     }
-    return false;
   };
 
-  const deleteAccount = () => {
+  const deleteAccount = async () => {
     if (!user) return;
-    
-    const users = JSON.parse(localStorage.getItem('cuet_users') || '[]');
-    const filteredUsers = users.filter((u: any) => u.id !== user.id);
-    localStorage.setItem('cuet_users', JSON.stringify(filteredUsers));
-    logout();
+
+    try {
+      // Delete profile (this will cascade delete related data)
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', user.id);
+
+      if (profileError) {
+        handleSupabaseError(profileError);
+        return;
+      }
+
+      // Delete auth user
+      const { error: authError } = await supabase.auth.admin.deleteUser(user.id);
+      
+      if (authError) {
+        console.error('Auth deletion error:', authError);
+      }
+
+      await logout();
+    } catch (error) {
+      console.error('Account deletion error:', error);
+    }
   };
 
   const uploadProfilePicture = async (file: File): Promise<string> => {
-    // Mock file upload - in real app, this would upload to server/cloud storage
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const imageUrl = reader.result as string;
-        if (user) {
-          updateProfile({ profilePicture: imageUrl });
-        }
-        resolve(imageUrl);
-      };
-      reader.readAsDataURL(file);
-    });
+    if (!user) throw new Error('No user logged in');
+
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}-${Date.now()}.${fileExt}`;
+      const filePath = `profile-pictures/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        handleSupabaseError(uploadError);
+      }
+
+      const { data } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const imageUrl = data.publicUrl;
+      await updateProfile({ profilePicture: imageUrl });
+      
+      return imageUrl;
+    } catch (error) {
+      console.error('Profile picture upload error:', error);
+      throw error;
+    }
   };
+
   const value = {
     user,
+    loading,
     login,
     register,
     logout,
